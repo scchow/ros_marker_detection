@@ -49,7 +49,7 @@ def go_to_goal(goal):
         raise TypeError("Goal must be of type Pose.")
 
     mb_goal = MoveBaseGoal()
-    mb_goal.target_pose.header.frame_id = 'map'
+    mb_goal.target_pose.header.frame_id = 'map'  # TODO frame_id will need to change
     mb_goal.target_pose.header.stamp = rospy.Time.now()
     mb_goal.target_pose.pose = goal
 
