@@ -26,9 +26,10 @@ import actionlib
 import tf2_ros
 
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from geometry_msgs.msg import Pose, Point, Quaternion
+from geometry_msgs.msg import Pose, PoseStamped, Point, Quaternion
 from actionlib_msgs.msg import GoalStatus
 from tf.transformations import quaternion_from_euler
+from std_msgs.msg import Bool, Header
 
 
 def heading(yaw):
@@ -49,7 +50,7 @@ def go_to_goal(goal):
         raise TypeError("Goal must be of type Pose.")
 
     mb_goal = MoveBaseGoal()
-    mb_goal.target_pose.header.frame_id = 'map'  # TODO frame_id will need to change
+    mb_goal.target_pose.header.frame_id = 'april_tag'
     mb_goal.target_pose.header.stamp = rospy.Time.now()
     mb_goal.target_pose.pose = goal
 
@@ -75,26 +76,48 @@ def go_to_goal(goal):
 class NavToGoal:
     def __init__(self):
         self.in_position = False
+        self.in_callback = False
 
-    def move_to_goal(self):
+    def move_to_goal(self, msg):
         """
         Moves to the goal once found
         :return:
         """
-        while not rospy.is_shutdown():
-            try:
-                tf2_ros.LookupTransformGoal(target_frame="april_tag", source_frame="odom", timeout=rospy.Duration(10))
-            except tf2_ros.LookupException as e:
-                rospy.logdebug("Cannot lookup to find tag {}".format(e))
+        if self.in_callback or self.in_position:
+            return
+        self.in_callback = True
+        rospy.loginfo("Starting to move to goal")
         # send goal
-        if not go_to_goal(Pose(Point(1, 0, 0), heading(0))):
-            return False  # TODO return from this function or do something else?
+        for frame_id in ["switch_1", "switch_2"]:
+            try:
+                h = Header()
+                h.frame_id = frame_id
+                src_point = PoseStamped(
+                        h,
+                        Pose(
+                            Point(0.3, 0, 0),
+                            heading(180)
+                            )
+                        )
+                tf_buf = tf2_ros.Buffer()
+                tf_listner = tf2_ros.TransformListner(tf_buf)
+                target_pt = tf_buf.transform(src_point, "map")
+            except:
+                rospy.logwarn("Skipping tag '{}'".format(frame_id))
+                continue
+
+        rospy.loginfo("Moving toward point...")
+        if not go_to_goal(src_point):
+            return 
+        rospy.loginfo("Exiting move_to_goal callback")
         # report in-position to all robots
         self.in_position = True
+        self.in_callback = False
 
 
 if __name__ == '__main__':
     rospy.init_node("move_to_goal")
     nav = NavToGoal()
+    rospy.Subscriber('/switch_found', Bool, nav.move_to_goal)
 
     rospy.spin()
