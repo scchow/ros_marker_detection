@@ -25,10 +25,11 @@ import rospy
 import actionlib
 import tf2_ros
 
+import tf2_geometry_msgs
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import Pose, PoseStamped, Point, Quaternion
 from actionlib_msgs.msg import GoalStatus
-from tf.transformations import quaternion_from_euler
+from tf.transformations import quaternion_from_euler, euler_from_quaternion
 from std_msgs.msg import Bool, Header
 
 
@@ -36,6 +37,12 @@ def heading(yaw):
     """ A helper function to getnerate quaternions from yaws."""
     q = quaternion_from_euler(0, 0, yaw)
     return Quaternion(*q)
+
+
+def flatten_quaternion(q):
+    """ constrains quaternion to 2D plane in case of 3Dness"""
+    eulers = euler_from_quaternion([q.w, q.x, q.y, q.z])
+    return Quaternion(*quaternion_from_euler(0, 0, eulers[2]))
 
 
 def go_to_goal(goal):
@@ -50,9 +57,10 @@ def go_to_goal(goal):
         raise TypeError("Goal must be of type Pose.")
 
     mb_goal = MoveBaseGoal()
-    mb_goal.target_pose.header.frame_id = 'april_tag'
+    mb_goal.target_pose.header.frame_id = 'map'
     mb_goal.target_pose.header.stamp = rospy.Time.now()
     mb_goal.target_pose.pose = goal
+    mb_goal.target_pose.pose.position.z = 0
 
     move_base = actionlib.SimpleActionClient('move_base', MoveBaseAction)
     move_base.wait_for_server()
@@ -95,19 +103,22 @@ class NavToGoal:
                 src_point = PoseStamped(
                         h,
                         Pose(
-                            Point(0.3, 0, 0),
-                            heading(180)
+                            Point(0, 0, 0.4),
+                            Quaternion(*quaternion_from_euler(0, 1.57, 0))
                             )
                         )
                 tf_buf = tf2_ros.Buffer()
-                tf_listner = tf2_ros.TransformListner(tf_buf)
-                target_pt = tf_buf.transform(src_point, "map")
-            except:
+                tf_listener = tf2_ros.TransformListener(tf_buf)
+                target_pt = tf_buf.transform(src_point, "map", timeout=rospy.Duration(1.0))
+                target_pt.pose.orientation = flatten_quaternion(target_pt.pose.orientation)
+            except tf2_ros.LookupException:
                 rospy.logwarn("Skipping tag '{}'".format(frame_id))
                 continue
 
+        # vis_pub.publish(target_pt)
+
         rospy.loginfo("Moving toward point...")
-        if not go_to_goal(src_point):
+        if not go_to_goal(target_pt.pose):
             return 
         rospy.loginfo("Exiting move_to_goal callback")
         # report in-position to all robots
@@ -118,6 +129,7 @@ class NavToGoal:
 if __name__ == '__main__':
     rospy.init_node("move_to_goal")
     nav = NavToGoal()
+    # vis_pub = rospy.Publisher('desired_goal_pose', PoseStamped, queue_size=10)
     rospy.Subscriber('/switch_found', Bool, nav.move_to_goal)
 
     rospy.spin()
